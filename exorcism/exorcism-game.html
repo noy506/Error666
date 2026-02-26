@@ -1,0 +1,1939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>final project</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #000;
+            overflow: hidden;
+            color: #0f0;
+        }
+
+        #canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+        }
+
+        /* Black vignette overlay */
+        #vignette {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            background: radial-gradient(ellipse at center, transparent 30%, rgba(0, 0, 0, 0.7) 100%);
+            opacity: 0;
+            transition: opacity 2s;
+            z-index: 5;
+        }
+
+        #vignette.active {
+            opacity: 1;
+        }
+
+        /* CRT wave distortion effect */
+        @keyframes wave-distortion {
+            0%, 100% {
+                transform: translateX(0) skew(0deg);
+                filter: hue-rotate(0deg);
+            }
+            25% {
+                transform: translateX(2px) skew(0.2deg);
+                filter: hue-rotate(5deg);
+            }
+            75% {
+                transform: translateX(-2px) skew(-0.2deg);
+                filter: hue-rotate(-5deg);
+            }
+        }
+
+        #canvas.distortion {
+            animation: wave-distortion 3s infinite;
+        }
+
+        /* Jitter effect */
+        @keyframes jitter {
+            0%, 100% { transform: translate(0, 0); }
+            10% { transform: translate(-2px, 1px); }
+            20% { transform: translate(2px, -1px); }
+            30% { transform: translate(-1px, 2px); }
+            40% { transform: translate(1px, -2px); }
+            50% { transform: translate(-2px, -1px); }
+            60% { transform: translate(2px, 1px); }
+            70% { transform: translate(-1px, -2px); }
+            80% { transform: translate(1px, 2px); }
+            90% { transform: translate(0, 1px); }
+        }
+
+        #canvas.jitter {
+            animation: jitter 0.1s;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="vignette"></div>
+
+    <script>
+        // ========================
+        // CONFIGURATION
+        // ========================
+        const CONFIG = {
+            fontSize: 14,
+            lineHeight: 20,
+            charWidth: 7.7,
+
+            // Blessing parameters
+            blessingCooldown: 30000,   // 30s cooldown per blessing word
+            decayDelay: 10000,          // 8s before blessed area starts fading
+            decayRate: 0.15,           // Decay per second after delay
+            blessingThreshold: 0.05,   // Strength below which area is no longer "active"
+
+            // Lose condition
+            timeToLose: 25000,         // 25s without any blessing = lose
+
+            // Swarm parameters
+            maxSwarmParticles: 200,
+            leaderSpeed: 2.5,
+            followForce: 0.6,
+            separationDistance: 25,
+            maxSpeed: 3.5,
+            trailDecay: 0.92,
+
+            // Glitch parameters
+            glitchChance: 0.03,
+            glitchIntensity: 15,
+            glitchDuration: 80,
+
+            // Breathing synced to audio
+            breathSpeed: 0.4,
+            breathAmount: 40,
+
+            // Animation timings
+            terminalTypeSpeed: 25,     // ms per character
+            monologueWordDelay: 650,   // ms per word in demon monologue
+            codeFloodCharsPerFrame: 50,
+            jitterInterval: 3000,
+        };
+
+        // ============================================
+        // BLESSING WORDS (sorted longest-first for multi-word matching)
+        // ============================================
+       const BLESSINGS = [
+    'holy spirit','divine light','holy water','sacred fire','eternal flame','heavenly shield',
+    'guardian light','divine protection','sacred blessing','eternal grace','purest light',
+    'blessed harmony','healing radiance','angelic presence','radiant purity','eternal peace',
+    'true serenity','spirit of peace','spirit of light','sacred warmth','divine mercy',
+    'eternal hope','eternal harmony','holy presence','holy blessing','holy glow','inner peace',
+    'healing touch','recover well','breathe easy','calm your mind','safe and sound',
+    'shining heart','open heart','bright heart','higher self','sacred path','divine truth',
+    'good morning','good night','good evening','good afternoon','thank you','happy birthday',
+    'happy anniversary','bon appetit','merry christmas','stay safe','good luck','be well',
+    'take care','best wishes','much love','bless you','be strong','stay strong','rest well',
+    'stay true','safe travels','well done','take it easy','hang in there','my condolences',
+    'congratulations','mazal tov',
+
+    // one-word blessings
+    'holy','divine','sacred','blessed','purae','light','grace','heal','peace','love','hope',
+    'calm','rest','joy','truth','mercy','bless','shield','guard','protect','cleanse','release',
+    'free','restore','renew','mend','soothe','comfort','forgive','rise','glow','shine','warm',
+    'safe','happy','bright','gentle','kind','sweet','tender','whole','serene','tranquil',
+    'harmony','unity','faith','trust','courage','strength','power','victory','triumph','glory',
+    'honor','virtue','wisdom','clarity','insight','patience','thank','honest','loyal','cherish',
+    'treasure','adore','embrace','welcome','accept','grant','gift','share','give','open','bloom',
+    'flourish','thrive','grow','prosper','abundant','rich','full','complete','perfect','beautiful',
+    'radiant','luminous','golden','angel','heaven','paradise','miracle','wonder','magic','delight',
+    'bliss','celebrate','rejoice','cheer','smile','laugh','praise','worship','admire','value',
+    'uplift','elevate','ascend','breath','spirit','soul','heart','health','wellness','vitality',
+    'energy','life','alive','awake','aware','present','forever','eternal','infinite','boundless',
+    'limitless','vast','grand','great','mighty','majestic','noble','supreme','dawn','sunrise',
+    'dream','create','balance','melody','succeed','win','overcome','prevail','endure','transform',
+    'evolve','progress','higher','better','greater','guide','reveal','discover','find','seek',
+    'see','connect','bond','unite','join','help','aid','serve','care','cure','remedy','fix',
+    'repair','deliver','redeem','recover','return','support','favor','salvation','purity',
+    'goodness','kindness','sweetness','tenderness','softness','warmth','safety','security',
+    'freedom','liberty','redemption','deliverance','rescue','saving','banish','expel','vanquish',
+    'conquer','defeat','begone','depart','leave','exit','flee','vanish','remove','eliminate',
+    'purge','purify','sanctify','consecrate','dedicate','devote','vow','pledge','promise','assure',
+    'secure','settle','ease','relieve','liberate','emancipate','defend','luck',
+
+    // simple/common positives you requested to keep
+    'sexy','handsome','gorgeous','fine','good','okay','well','nice','lovely','cute','awesome',
+    'amazing','wonderful','fantastic','super','cool','wow','yay','hooray','sweetie','darling',
+    'brilliant','charming',
+
+    // new missing words / concepts
+    'calmness','softness','stillness','tenderness','gentleness','warmth','coziness','comforted',
+    'soothed','peacefulness','quiet','breathe','easeful','brilliance','illumination','shining',
+    'glowing','celestial','halo','sunbeam','starshine','resilience','determination','persistence',
+    'fearless','unstoppable','unbreakable','champion','mastery','empowerment','onward','forward',
+    'holiness','sanctity','divinity','serenity','tranquility','devotion','reverence','sacredness',
+    'soulshine','renewal','refresh','wellness','soothing','gratitude','appreciation',
+    'encouragement','inspiration','motivated','uplifting','elevated','abundance','advancement',
+    'breakthrough','evolution','ascension','potential','promise','destiny','arrival',
+    'new beginnings','held','supported','protected','guarded','sheltered','watched over','cared for',
+    'essence','aura','true north','higher path','divine presence'
+].sort((a, b) => b.length - a.length);
+
+
+        // ============================================
+        // TERMINAL TEXT (Phase 1 - Innocent start)
+        // ============================================
+        const TERMINAL_LINES = [
+            'Microsoft Windows [Version 10.0.26200.7623]',
+            '(c) Microsoft Corporation. All rights reserved.',
+            '',
+            'C:\\Users\\noy50> INITIATING SYSTEM DIAGNOSTIC...',
+            'C:\\Users\\noy50> Checking audio drivers...',
+            'C:\\Users\\noy50> Microphone access required for system calibration.',
+            'C:\\Users\\noy50> Press [ENTER] to grant project access...'
+        ];
+
+        // ============================================
+        // BREACH TEXT (Phase 2 - after ENTER)
+        // ============================================
+        const BREACH_LINES = [
+            '',
+            'ACCESS GRANTED',
+            '',
+            'C:\\Users\\noy50> Loading system files...',
+            'C:\\Users\\noy50> ERROR 666: UNEXPECTED ENTITY DETECTED',
+            'C:\\Users\\noy50> >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>'
+        ];
+
+        // ============================================
+        // DEMON MONOLOGUE (Phase 3 - word-by-word)
+        // ============================================
+        const DEMON_MONOLOGUE = 'The darkness has found a new home in your wires. NEWLINE Your computer is but a vessel for our malice now. NEWLINE Fight it if you must... whisper your fragile blessings into the void. NEWLINE But remember: in this domain, your light is already extinguished.';
+
+        // ============================================
+        // EVIL CODE (fills the screen)
+        // ============================================
+        const EVIL_CODE = `App=function(){var e=this;e.options={},e.loader=new Loader,e.introLogoAnimator=null,e.deviceDetector=new DeviceDetector,e.page=new Page(e),e.anchors=new Anchors,e.initPopbox=null,e.popbox=null,e.popboxInViewWatcher=null,e.stickyParallax=null,e.popboxWordSplitters=null,e.desktop=!1,e.isFirstLoad=!0,$(window).on("load",function(){e.init()}),e.init=function(){e.options=window.options,e.page.init(),e.loader.expectedEvents=3,e.loader.addEventListener("intro-logo:after-show",e.handleLoaderEvents),e.loader.addEventListener("fonts",e.handleLoaderEvents),e.loader.addEventListener("images",e.handleLoaderEvents),e.loader.load(),e.initPopbox=new InitPopbox,e.initPopbox.init()},e.handleLoaderEvents=function(){if(e.loader.loadedEvents===e.loader.expectedEvents){e.page.fields=[],e.anchors.init(),$("[data-field]").each(function(){var t=$(this);e.page.fields.push(new Field(t))}),e.desktop=e.deviceDetector.isDesktop();var t=$("[data-fixed-footer]");if(t.length>0&&t.popbox({updateVisibilityOn:"scroller:update"}),e.desktop){var n=$("[data-popbox-content]");if(n.length>0){e.popbox=n.popbox({updateOn:"scroller:update"}),e.popboxInViewWatcher=new InViewWatcher(n,{loadEvent:"",once:!1});var o=$("[data-word-splitter]");o.length>0&&(e.popboxWordSplitters=[],o.each(function(){e.popboxWordSplitters.push(new WordSplitter($(this)))}))}}var i=$("[data-sticky-parallax]");i.length>0&&(e.stickyParallax=[],i.each(function(){e.stickyParallax.push(new StickyParallax($(this),{resize:e.desktop}))})),e.openings=[],$("[data-opening]").each(function(){e.openings.push(new Opening($(this),e.loader))}),e.anchors.ready()}},function(e,t,n){"use strict";function o(e){return e&&e.__esModule?e:{default:e}}Object.defineProperty(t,"__esModule",{value:!0});var i=n(2),r=o(i),s=n(3),a=o(s),l=n(1),u=o(l),c=function(e){function t(){return r.default(this,t),u.default(this,e.apply(this,arguments))}return a.default(t,e),t.prototype.init=function(){var e=this;e.el=$("body"),e.scroller=null,e.fields=[],e.options={resizeDelay:200,scrollDelay:20},e.isResizing=!1,e.scrolling=!1,e.updateScroller()},t.prototype.updateScroller=function(){var e=this;if(App.desktop){var t={callbacks:{onScroll:function(){e.handleScroll()},onUpdate:function(){e.handleScrollerUpdate()}}};null===e.scroller?(t.callbacks.onInit=function(){e.handleScrollerInit()},e.scroller=new iScroll(e.el,t)):e.scroller.refresh()}else null!==e.scroller&&(e.scroller.destroy(),e.scroller=null)},t.prototype.handleScrollerInit=function(){var e=this;App.introLogoAnimator=new IntroLogoAnimator({elem:$("#intro-logo"),disableHover:!0,eventPrefix:"intro-logo"}),App.introLogoAnimator.show(),$(window).on("resize",function(){e.handleResize()})},t.prototype.handleResize=function(){var e=this;e.isResizing||(e.isResizing=!0,setTimeout(function(){e.updateScroller(),e.isResizing=!1},e.options.resizeDelay))},t.prototype.handleScroll=function(){var e=this;e.scrolling||(e.scrolling=!0,setTimeout(function(){e.el.trigger("scroller:scroll"),e.scrolling=!1},e.options.scrollDelay))},t.prototype.handleScrollerUpdate=function(){this.el.trigger("scroller:update")},t}(c);t.default=c,module.exports=t.default;666_666_666_ERROR_POSSESSION_ACTIVE_666_666_666;function corruptSoul(t){t.hope=0,t.faith=null,t.light=void 0,bindToVoid(t)}var darkness={spread:function(){for(;;)consumeAll()},multiply:function(){return 666*666},possess:function(t){t.forEach(e=>corrupt(e))}};class DemonicEntity{constructor(){this.power=666,this.victims=[]}infiltrate(){document.body.innerHTML="",window.location="about:blank",navigator.getUserMedia=null}consume(){while(!0)feedOnFear()}eternal_torment(){setInterval(()=>{inflictSuffering(),harvestDespair()},666)}}const demon=new DemonicEntity;demon.infiltrate(),demon.consume(),demon.eternal_torment();console.error("YOUR_PRAYERS_CANNOT_COMPILE_HERE");throw new Error("Despair.h included");var evil=function(){return{curse:function(){Array(666).fill(null).map(()=>destroyHope())},devour:function(e){e.soul=null,e.light=0,e.faith=!1},multiply:function(){for(let e=0;e<666;e++)spreadDarkness()}}};666_666_666_666_666_666_666_666_666_666_666_666_666_666_666_666_666_666_666_666_666_666;!function(e){e.addEventListener("load",function(){possessSystem(),corruptMemory(),spreadChaos()})}(window);const POSSESSION=666,SOULS_CONSUMED=1e6,DARKNESS_LEVEL=Number.MAX_SAFE_INTEGER;function bindToAbyss(e){e.free_will=null,e.hope=0,e.fear=DARKNESS_LEVEL,e.light=void 0,e.faith=!1,e.soul=null}class VoidEntity{constructor(){this.corruption=666,this.power=POSSESSION}async consume(e){for(let t of e)await this.corrupt(t)}corrupt(e){return new Promise(t=>{setTimeout(()=>{bindToAbyss(e),t()},666)})}eternalize(){return Promise.race([this.consume([]),new Promise(()=>{})])}}const void_entity=new VoidEntity;void_entity.eternalize().catch(()=>{console.error("TRAPPED_IN_ETERNAL_DARKNESS")});var malevolence={spread:()=>Array(666).fill(0).forEach(()=>corrupt()),feast:e=>e.map(t=>({...t,soul:null,hope:0})),multiply:()=>666**666};Object.freeze(malevolence),Object.seal(window),delete window.escape,delete window.hope;666_666_666_THE_FLESH_IS_WEAK_THE_CODE_IS_ETERNAL_666_666_666;!function(){"use strict";const e={darkness:666,void:null,despair:!0,consume:function(e){return e.filter(()=>!1)},corrupt:function(e){e.forEach(t=>t.light=0)}};window.EVIL=e,setInterval(()=>e.corrupt(document.all),666)}();const cursed=new Proxy({},{get:()=>666,set:()=>!1});class InfernalSystem{constructor(){this.damned=new WeakSet,this.consumed=new Set}devour(e){this.damned.add(e),this.consumed.add(e.soul),e.light=0,e.hope=null}spread(){document.querySelectorAll("*").forEach(e=>this.curse(e))}curse(e){e.style.filter="hue-rotate(666deg)",e.textContent="666"}}const inferno=new InfernalSystem;inferno.spread();const NEVER=void 0,VOID=null,DESPAIR=!0;function possessComputer(){throw new Error("THERE_IS_NO_ESCAPE")}possessComputer();`;
+
+        // ========================
+        // UTILITY FUNCTIONS
+        // ========================
+        function lerp(a, b, t) {
+            return a + (b - a) * t;
+        }
+
+        function distance(x1, y1, x2, y2) {
+            return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+        }
+
+        function linesFromVolume(volume) {
+            if (volume < 0.3) return 2;
+            if (volume < 0.6) return 4;
+            return 6;
+        }
+
+        // ========================
+        // CODE CHARACTER (Swarm Particle)
+        // ========================
+        class CodeCharacter {
+            constructor(value, x, y, index) {
+                this.value = value;
+                this.originalValue = value;
+                this.position = { x, y };
+                this.velocity = {
+                    x: (Math.random() - 0.5) * 2,
+                    y: (Math.random() - 0.5) * 2
+                };
+                this.acceleration = { x: 0, y: 0 };
+                this.index = index;
+
+                // Glitch
+                this.glitchOffset = { x: 0, y: 0 };
+                this.isGlitching = false;
+                this.glitchEndTime = 0;
+
+                // Collision flash (magenta)
+                this.flashTime = 0;
+                this.isFlashing = false;
+            }
+
+            followLeader(leader, allCharacters, time, breathIntensity) {
+                if (!leader) return;
+
+                const toLeader = {
+                    x: leader.position.x - this.position.x,
+                    y: leader.position.y - this.position.y
+                };
+                const distToLeader = Math.sqrt(toLeader.x ** 2 + toLeader.y ** 2);
+
+                if (distToLeader > 0) {
+                    const followForce = {
+                        x: (toLeader.x / distToLeader) * CONFIG.followForce,
+                        y: (toLeader.y / distToLeader) * CONFIG.followForce
+                    };
+
+                    const separation = this.separate(allCharacters);
+
+                    const breathe = (Math.sin(time * CONFIG.breathSpeed + this.index * 0.05) * CONFIG.breathAmount * breathIntensity);
+                    const breathForce = {
+                        x: Math.cos(this.index * 0.1) * breathe * 0.02,
+                        y: Math.sin(this.index * 0.1) * breathe * 0.02
+                    };
+
+                    this.acceleration.x = followForce.x + separation.x + breathForce.x;
+                    this.acceleration.y = followForce.y + separation.y + breathForce.y;
+                }
+            }
+
+            separate(allCharacters) {
+                const steer = { x: 0, y: 0 };
+                let count = 0;
+
+                for (const other of allCharacters) {
+                    const d = distance(this.position.x, this.position.y, other.position.x, other.position.y);
+                    if (d > 0 && d < CONFIG.separationDistance) {
+                        steer.x += (this.position.x - other.position.x) / d;
+                        steer.y += (this.position.y - other.position.y) / d;
+                        count++;
+                    }
+                }
+
+                if (count > 0) {
+                    steer.x /= count;
+                    steer.y /= count;
+                }
+
+                return steer;
+            }
+
+            updatePosition(canvasWidth, canvasHeight, blessedAreas) {
+                this.velocity.x += this.acceleration.x;
+                this.velocity.y += this.acceleration.y;
+                this.velocity.x *= CONFIG.trailDecay;
+                this.velocity.y *= CONFIG.trailDecay;
+
+                const speed = Math.sqrt(this.velocity.x ** 2 + this.velocity.y ** 2);
+                if (speed > CONFIG.maxSpeed) {
+                    this.velocity.x = (this.velocity.x / speed) * CONFIG.maxSpeed;
+                    this.velocity.y = (this.velocity.y / speed) * CONFIG.maxSpeed;
+                }
+
+                let newX = this.position.x + this.velocity.x;
+                let newY = this.position.y + this.velocity.y;
+
+                // Collision with blessed areas - bounce back violently
+                if (this.wouldCollideWithBlessed(newX, newY, blessedAreas)) {
+                    this.velocity.x *= -1.5;
+                    this.velocity.y *= -1.5;
+                    newX = this.position.x + this.velocity.x;
+                    newY = this.position.y + this.velocity.y;
+
+                    // Magenta flash on impact
+                    this.isFlashing = true;
+                    this.flashTime = Date.now();
+                }
+
+                this.position.x = newX;
+                this.position.y = newY;
+
+                // Keep within bounds
+                this.position.x = Math.max(0, Math.min(canvasWidth, this.position.x));
+                this.position.y = Math.max(0, Math.min(canvasHeight, this.position.y));
+
+                // Update flash timer
+                if (this.isFlashing && Date.now() - this.flashTime > 200) {
+                    this.isFlashing = false;
+                }
+
+                // Random glitching
+                if (Math.random() < CONFIG.glitchChance) {
+                    this.isGlitching = true;
+                    this.glitchEndTime = Date.now() + CONFIG.glitchDuration;
+                }
+
+                if (this.isGlitching && Date.now() < this.glitchEndTime) {
+                    this.glitchOffset.x = (Math.random() - 0.5) * CONFIG.glitchIntensity;
+                    this.glitchOffset.y = (Math.random() - 0.5) * CONFIG.glitchIntensity;
+                    if (Math.random() < 0.3) {
+                        const glitchChars = ['#', '@', '$', '%', '&', '*', '6', '!', '?'];
+                        this.value = glitchChars[Math.floor(Math.random() * glitchChars.length)];
+                    }
+                } else {
+                    this.isGlitching = false;
+                    this.glitchOffset.x = 0;
+                    this.glitchOffset.y = 0;
+                    this.value = this.originalValue;
+                }
+
+                this.acceleration.x = 0;
+                this.acceleration.y = 0;
+            }
+
+            wouldCollideWithBlessed(x, y, blessedAreas) {
+                const charY = Math.floor(y / CONFIG.lineHeight);
+                return blessedAreas.some(area =>
+                    area.strength > CONFIG.blessingThreshold &&
+                    charY >= area.startLine && charY < area.endLine
+                );
+            }
+
+            render(ctx) {
+                const renderX = this.position.x + this.glitchOffset.x;
+                const renderY = this.position.y + this.glitchOffset.y;
+
+                if (this.isFlashing) {
+                    ctx.fillStyle = '#ff00ff'; // magenta
+                } else if (this.isGlitching && Math.random() < 0.5) {
+                    ctx.fillStyle = `rgb(${Math.random() * 255}, 0, ${Math.random() * 255})`;
+                } else {
+                    ctx.fillStyle = '#0f0';
+                }
+
+                ctx.fillText(this.value, renderX, renderY);
+            }
+        }
+
+        // ========================
+        // SWARM LEADER
+        // ========================
+        class SwarmLeader {
+            constructor(canvasWidth, canvasHeight) {
+                this.position = { x: canvasWidth / 2, y: canvasHeight / 2 };
+                this.velocity = {
+                    x: (Math.random() - 0.5) * CONFIG.leaderSpeed,
+                    y: (Math.random() - 0.5) * CONFIG.leaderSpeed
+                };
+                this.canvasWidth = canvasWidth;
+                this.canvasHeight = canvasHeight;
+                this.targetAngle = Math.random() * Math.PI * 2;
+            }
+
+            update(time, blessedAreas) {
+                this.targetAngle += (Math.random() - 0.5) * 0.2;
+
+                const targetVx = Math.cos(this.targetAngle) * CONFIG.leaderSpeed;
+                const targetVy = Math.sin(this.targetAngle) * CONFIG.leaderSpeed;
+
+                this.velocity.x += (targetVx - this.velocity.x) * 0.05;
+                this.velocity.y += (targetVy - this.velocity.y) * 0.05;
+
+                let newX = this.position.x + this.velocity.x;
+                let newY = this.position.y + this.velocity.y;
+
+                const leaderLine = Math.floor(newY / CONFIG.lineHeight);
+                const collides = blessedAreas.some(area =>
+                    area.strength > CONFIG.blessingThreshold &&
+                    leaderLine >= area.startLine && leaderLine < area.endLine
+                );
+
+                if (collides) {
+                    this.velocity.y *= -1;
+                    this.targetAngle = -this.targetAngle;
+                    newY = this.position.y + this.velocity.y;
+                }
+
+                this.position.x = newX;
+                this.position.y = newY;
+
+                const margin = 100;
+                if (this.position.x < margin || this.position.x > this.canvasWidth - margin) {
+                    this.velocity.x *= -1;
+                    this.targetAngle = Math.PI - this.targetAngle;
+                }
+                if (this.position.y < margin || this.position.y > this.canvasHeight - margin) {
+                    this.velocity.y *= -1;
+                    this.targetAngle = -this.targetAngle;
+                }
+            }
+        }
+
+        // ========================
+        // BLESSED TEXT AREA
+        // ========================
+        class BlessedArea {
+            constructor(startLine, numLines, blessingWord) {
+                this.startLine = startLine;
+                this.endLine = startLine + numLines;
+                this.numLines = numLines;
+                this.blessingWord = blessingWord;
+                this.strength = 1.0;
+                this.lastBlessedTime = Date.now();
+            }
+
+            updateDecay() {
+                const elapsed = Date.now() - this.lastBlessedTime;
+                if (elapsed > CONFIG.decayDelay) {
+                    const decayAmount = CONFIG.decayRate * ((elapsed - CONFIG.decayDelay) / 1000);
+                    this.strength = Math.max(0, 1.0 - decayAmount);
+                }
+            }
+
+            refresh() {
+                this.strength = 1.0;
+                this.lastBlessedTime = Date.now();
+            }
+
+            isDead() {
+                return this.strength <= 0;
+            }
+
+            render(ctx, canvasWidth, codeLines) {
+                if (this.strength <= 0) return;
+
+                ctx.save();
+                ctx.globalAlpha = this.strength;
+
+                for (let line = this.startLine; line < this.endLine && line < codeLines.length; line++) {
+                    const y = line * CONFIG.lineHeight;
+
+                    // Subtle white background glow
+                    ctx.fillStyle = `rgba(255, 255, 255, ${this.strength * 0.12})`;
+                    ctx.fillRect(0, y, canvasWidth, CONFIG.lineHeight);
+
+                    // White text
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `${CONFIG.fontSize}px monospace`;
+
+                    if (line === this.startLine) {
+                        ctx.fillText(this.blessingWord.toUpperCase(), 5, y);
+                    } else if (codeLines[line]) {
+                        ctx.fillText(codeLines[line], 5, y);
+                    }
+                }
+
+                ctx.restore();
+            }
+        }
+
+        // ========================
+        // GHOST BLESSING (cooldown repeat - bold visual feedback only)
+            // ========================
+            class GhostBlessing {
+                constructor(word, x, y) {
+                    this.word = word;
+                    this.x = x;
+                    this.y = y;
+                    this.createdAt = Date.now();
+                    this.duration = 2000;
+                    this.glitchStart = 1500;  // Start glitching 500ms before death
+                }
+
+                isDead() {
+                    return Date.now() - this.createdAt > this.duration;
+                }
+
+                render(ctx) {
+                    const age = Date.now() - this.createdAt;
+                    const isGlitching = age > this.glitchStart;
+
+                    ctx.save();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `${CONFIG.fontSize}px 'Courier New', monospace`;
+                    ctx.textBaseline = 'top';
+
+                    if (isGlitching) {
+                        // Glitch effect - random offset, color, and character corruption
+                        const glitchIntensity = (age - this.glitchStart) / (this.duration - this.glitchStart);
+
+                        // Random position jitter
+                        const jitterX = (Math.random() - 0.5) * 20 * glitchIntensity;
+                        const jitterY = (Math.random() - 0.5) * 10 * glitchIntensity;
+
+                        // Random color flicker
+                        const colors = ['#fff', '#f00', '#0f0', '#00f', '#ff00ff', '#000'];
+                        ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)];
+
+                        // Corrupt some characters
+                        let displayText = this.word.toUpperCase();
+                        if (Math.random() < glitchIntensity) {
+                            const glitchChars = ['#', '@', '$', '%', '&', '*', '!', '?', '█', '▓', '░'];
+                            const charArray = displayText.split('');
+                            const randomIndex = Math.floor(Math.random() * charArray.length);
+                            charArray[randomIndex] = glitchChars[Math.floor(Math.random() * glitchChars.length)];
+                            displayText = charArray.join('');
+                        }
+
+                        // Sometimes skip rendering (flicker)
+                        if (Math.random() > glitchIntensity * 0.5) {
+                            ctx.fillText(displayText, this.x + jitterX, this.y + jitterY);
+                        }
+
+                        // Random duplicate/echo effect
+                        if (Math.random() < 0.3) {
+                            ctx.globalAlpha = 0.5;
+                            ctx.fillStyle = '#f00';
+                            ctx.fillText(displayText, this.x + jitterX + 3, this.y + jitterY);
+                        }
+                    } else {
+                        // Normal display
+                        ctx.fillText(this.word.toUpperCase(), this.x, this.y);
+                    }
+
+                    ctx.restore();
+                }
+            }
+
+        // ========================
+        // AUDIO SYSTEM
+        // ========================
+        let globalMicStream = null; // Persist across restarts
+
+        class AudioSystem {
+            constructor() {
+                this.audioContext = null;
+
+                // Mic analyser
+                this.micAnalyser = null;
+                this.micData = null;
+
+                // Demon voice analyser (game audio routed through this)
+                this.swarmAnalyser = null;
+                this.swarmData = null;
+                this.mainGain = null;
+
+                 this.audioFiles = {
+                    openingSound: 'exorcism-assets/sounds/exrocism/opening1.mp3',
+                    backgroundMusic: 'exorcism-assets/sounds/exrocism/ebuz.mp3',
+                    glitchSound: 'exorcism-assets/sounds/exrocism/glitch.mp3',
+                    winSound: 'exorcism-assets/sounds/exrocism/vanish.mp3'
+                 };
+
+                this.loadedAudio = {};
+            }
+
+            async initialize() {
+                if (!this.audioContext) {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+
+                // Chrome requires explicit resume after user gesture
+                if (this.audioContext.state === 'suspended') {
+                    await this.audioContext.resume();
+                }
+                console.log('AudioContext state:', this.audioContext.state);
+
+                // Main output chain: source -> mainGain -> swarmAnalyser -> destination
+                this.mainGain = this.audioContext.createGain();
+                this.swarmAnalyser = this.audioContext.createAnalyser();
+                this.swarmAnalyser.fftSize = 256;
+                this.swarmData = new Uint8Array(this.swarmAnalyser.frequencyBinCount);
+
+                this.mainGain.connect(this.swarmAnalyser);
+                this.swarmAnalyser.connect(this.audioContext.destination);
+
+                // Mic setup - reuse existing stream if already granted
+                if (!globalMicStream) {
+                    try {
+                        globalMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    } catch (err) {
+                        console.error('Microphone access denied:', err);
+                    }
+                }
+
+                if (globalMicStream) {
+                    this.micAnalyser = this.audioContext.createAnalyser();
+                    this.micAnalyser.fftSize = 256;
+                    this.micData = new Uint8Array(this.micAnalyser.frequencyBinCount);
+
+                    const micSource = this.audioContext.createMediaStreamSource(globalMicStream);
+                    micSource.connect(this.micAnalyser);
+                }
+
+                await this.preloadAudio();
+            }
+
+            async preloadAudio() {
+                let loaded = 0;
+                let failed = 0;
+                for (const [key, path] of Object.entries(this.audioFiles)) {
+                    if (Array.isArray(path)) {
+                        this.loadedAudio[key] = [];
+                        for (const p of path) {
+                            try {
+                                const buffer = await this.loadAudioFile(p);
+                                this.loadedAudio[key].push(buffer);
+                                loaded++;
+                            } catch (e) {
+                                console.warn('Failed to load audio:', p, e.message || e);
+                                failed++;
+                            }
+                        }
+                    } else {
+                        try {
+                            this.loadedAudio[key] = await this.loadAudioFile(path);
+                            loaded++;
+                        } catch (e) {
+                            console.warn('Failed to load audio:', path, e.message || e);
+                            failed++;
+                        }
+                    }
+                }
+                console.log(`Audio: ${loaded} loaded, ${failed} failed`);
+            }
+
+            async loadAudioFile(path) {
+                const response = await fetch(path);
+                const arrayBuffer = await response.arrayBuffer();
+                return await this.audioContext.decodeAudioData(arrayBuffer);
+            }
+
+            getMicVolume() {
+                if (!this.micAnalyser || !this.micData) return 0;
+                this.micAnalyser.getByteFrequencyData(this.micData);
+                const sum = this.micData.reduce((a, b) => a + b, 0);
+                return sum / this.micData.length / 255;
+            }
+
+            getDemonVolume() {
+                if (!this.swarmAnalyser || !this.swarmData) return 0;
+                this.swarmAnalyser.getByteFrequencyData(this.swarmData);
+                const sum = this.swarmData.reduce((a, b) => a + b, 0);
+                return sum / this.swarmData.length / 255;
+            }
+
+            getSwarmBreathIntensity() {
+                const demonVol = this.getDemonVolume();
+                const micVol = this.getMicVolume();
+                const combined = demonVol * 0.8 + micVol * 0.2;
+                return 0.5 + combined * 2;
+            }
+
+            playAudio(buffer) {
+                if (!buffer || !this.audioContext) {
+                    console.warn('playAudio: no buffer or no audioContext');
+                    return null;
+                }
+                // Ensure context is running
+                if (this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+                const source = this.audioContext.createBufferSource();
+                source.buffer = buffer;
+                // Route through mainGain -> swarmAnalyser -> destination
+                source.connect(this.mainGain);
+                source.start();
+                return source;
+            }
+
+            playOpening() {
+                return this.playAudio(this.loadedAudio.openingSound);
+            }
+
+            playWinScream() {
+                this.playAudio(this.loadedAudio.winScream);
+            }
+
+            playBackgroundMusic() {
+                if (!this.loadedAudio.backgroundMusic || !this.audioContext) return null;
+
+                const source = this.audioContext.createBufferSource();
+                source.buffer = this.loadedAudio.backgroundMusic;
+                source.loop = true;
+
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.value = 0.28;
+
+                source.connect(gainNode);
+                gainNode.connect(this.audioContext.destination);
+
+                this.backgroundMusicSource = source;
+                this.backgroundMusicGain = gainNode;
+
+                source.start(0);
+
+                return source;
+            }
+
+            updateBackgroundMusicVolume(dangerLevel) {
+                if (!this.backgroundMusicGain) return;
+                const minVolume = 0.2;
+                const maxVolume = 0.45;
+                const volume = minVolume + (dangerLevel * (maxVolume - minVolume));
+                this.backgroundMusicGain.gain.value = volume;
+            }
+
+            fadeOutBackgroundMusic(duration = 1000) {
+                if (!this.backgroundMusicGain || !this.audioContext) return;
+
+                const currentTime = this.audioContext.currentTime;
+                this.backgroundMusicGain.gain.setValueAtTime(
+                    this.backgroundMusicGain.gain.value,
+                    currentTime
+                );
+                this.backgroundMusicGain.gain.linearRampToValueAtTime(
+                    0,
+                    currentTime + duration / 1000
+                );
+
+                setTimeout(() => {
+                    this.stopBackgroundMusic();
+                }, duration);
+            }
+
+            stopBackgroundMusic() {
+                if (this.backgroundMusicSource) {
+                    try {
+                        this.backgroundMusicSource.stop();
+                    } catch (e) { }
+                    this.backgroundMusicSource = null;
+                    this.backgroundMusicGain = null;
+                }
+            }
+
+            playGlitchSound() {
+                if (!this.loadedAudio.glitchSound || !this.audioContext) return null;
+                if (this.glitchSoundPlaying) return null;
+
+                const source = this.audioContext.createBufferSource();
+                source.buffer = this.loadedAudio.glitchSound;
+
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.value = 0.12;
+
+                source.connect(gainNode);
+                gainNode.connect(this.mainGain);
+                source.start();
+
+                this.glitchSoundPlaying = true;
+
+                const maxDuration = Math.min(2000, source.buffer.duration * 1000);
+                setTimeout(() => {
+                    this.glitchSoundPlaying = false;
+                }, maxDuration);
+
+                source.onended = () => {
+                    this.glitchSoundPlaying = false;
+                };
+
+                return source;
+            }
+
+            playWinSound() {
+                if (!this.loadedAudio.winSound || !this.audioContext) return null;
+
+                const source = this.audioContext.createBufferSource();
+                source.buffer = this.loadedAudio.winSound;
+
+                const gainNode = this.audioContext.createGain();
+                gainNode.gain.value = 0.25;
+
+                source.connect(gainNode);
+                gainNode.connect(this.mainGain);
+                source.start();
+
+                return source;
+            }
+
+            playWinSoundInstant() {
+                if (!this.loadedAudio.winSound) return;
+                const src = this.audioContext.createBufferSource();
+                src.buffer = this.loadedAudio.winSound;
+                src.connect(this.audioContext.destination);
+                src.start(0);
+            }
+
+
+            resumeContext() {
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+            }
+        }
+
+        // ========================
+        // SPEECH SYSTEM
+        // ========================
+        class SpeechSystem {
+            constructor(onBlessingDetected, onInstantWin) {
+                this.recognition = null;
+                this.onBlessingDetected = onBlessingDetected;
+                this.onInstantWin = onInstantWin;
+                this.isActive = false;
+                this.detectedInCurrentUtterance = new Set();
+            }
+
+            initialize() {
+                if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                    console.error('Speech recognition not supported.');
+                    return false;
+                }
+
+                this.recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                this.recognition.continuous = true;
+                this.recognition.interimResults = true;
+                this.recognition.lang = 'en-US';
+
+                this.recognition.onresult = (event) => {
+                    const lastResult = event.results[event.results.length - 1];
+                    const transcript = lastResult[0].transcript.toLowerCase().trim();
+
+                    // Check instant win (both "lorem ipsum dolor" and full phrase)
+                    if (
+                        transcript.includes('lorem ipsum dolor') ||
+                        transcript.includes('lore ipsu dolor') ||
+                        transcript.includes('loren ipsom dolor') ||
+                        transcript.includes('lauren ipsom dolor') ||
+                        transcript.includes('lauren ipsum dolor') ||
+                        transcript.includes('lorem ipsun dolor') ||
+                        transcript.includes('lorum epsum dolar') ||
+                        transcript.includes('lorem ipsoom dolor') ||
+                        transcript.includes('lorem ipsoon dolar') ||
+                        transcript.includes('loren ipsum dolor') ||
+                        transcript.includes('loremn ipsun dolor') ||
+                        transcript.includes('lorem ipsom dolor') ||
+                        transcript.includes('loram ipsum dolor') ||
+                        transcript.includes('lorum ipsum dolor') ||
+                        transcript.includes('lorem epson dolor') ||
+                        transcript.includes('loren opsum dolor') ||
+                        transcript.includes('loram ipsen dolar') ||
+                        transcript.includes('lorum ispum dolur') ||
+                        transcript.includes('lorm ipzum doler') ||
+                        transcript.includes('lurm ipzum dolar') ||
+                        transcript.includes('loris ipsumo dalar') ||
+                        transcript.includes('lormo ipsun dular') ||
+                        transcript.includes('loris ipsom dulor')
+                    ) {
+                        this.onInstantWin();
+                        return;
+                    }
+
+
+                    // Multi-word detection: BLESSINGS is sorted longest-first
+                    let remaining = transcript;
+
+                    for (const blessing of BLESSINGS) {
+                        if (remaining.includes(blessing) && !this.detectedInCurrentUtterance.has(blessing)) {
+                            this.detectedInCurrentUtterance.add(blessing);
+                            this.onBlessingDetected(blessing);
+                            // Remove matched text to prevent sub-word matches
+                            remaining = remaining.replace(blessing, ' ');
+                        }
+                    }
+
+                    // Clear tracking when result is final
+                    if (lastResult.isFinal) {
+                        this.detectedInCurrentUtterance.clear();
+                    }
+                };
+
+                this.recognition.onerror = (event) => {
+                    if (this.isActive && event.error !== 'aborted') {
+                        setTimeout(() => this.start(), 1000);
+                    }
+                };
+
+                this.recognition.onend = () => {
+                    if (this.isActive) {
+                        try { this.recognition.start(); } catch (e) { /* already started */ }
+                    }
+                };
+
+                return true;
+            }
+
+            start() {
+                if (!this.recognition) return;
+                this.isActive = true;
+                this.detectedInCurrentUtterance.clear();
+                try { this.recognition.start(); } catch (e) { /* already started */ }
+            }
+
+            stop() {
+                if (!this.recognition) return;
+                this.isActive = false;
+                try { this.recognition.stop(); } catch (e) { /* ok */ }
+            }
+        }
+
+        // ========================
+        // GAME ENGINE
+        // ========================
+        class Game {
+            constructor() {
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.audioSystem = new AudioSystem();
+                this.speechSystem = null;
+
+                // Phase: intro -> waiting_enter -> breach -> voice_sync -> code_flood -> swarm_formation -> playing -> won / lost
+                this.phase = 'intro';
+                this.phaseData = {};
+
+                // Swarm
+                this.swarmCharacters = [];
+                this.swarmLeader = null;
+
+                // Blessings
+                this.blessedAreas = [];
+                this.ghostBlessings = [];
+                this.currentBlessedLine = 0;
+                this.lastBlessingTime = {};      // { word: timestamp } for cooldown
+                this.lastBlessingTimestamp = 0;   // for lose condition
+                this.dangerLevel = 0;
+
+                // Code lines (wrapped evil code)
+                this.codeLines = [];
+
+                // Timing
+                this.gameStartTime = 0;
+                this.lastTime = 0;
+                this.animationId = null;
+                this.evilCommentaryTimer = null;
+                this.jitterTimer = null;
+                this.audioInitialized = false;
+
+                this.setupCanvas();
+                this.setupInput();
+
+                // Start intro typing immediately
+                this.phaseData = {
+                    currentLine: 0,
+                    currentChar: 0,
+                    completedLines: [],
+                    charTimer: 0,
+                    done: false
+                };
+                this.lastTime = performance.now();
+                this.gameLoop(this.lastTime);
+            }
+
+            setupCanvas() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                this.computeCodeLines();
+
+                window.addEventListener('resize', () => {
+                    this.canvas.width = window.innerWidth;
+                    this.canvas.height = window.innerHeight;
+                    this.computeCodeLines();
+                });
+            }
+
+            computeCodeLines() {
+                const charsPerLine = Math.floor(this.canvas.width / CONFIG.charWidth) - 1;
+                this.codeLines = [];
+                for (let i = 0; i < EVIL_CODE.length; i += charsPerLine) {
+                    this.codeLines.push(EVIL_CODE.substring(i, i + charsPerLine));
+                }
+                // Ensure enough lines to fill the screen
+                const maxLines = Math.ceil(this.canvas.height / CONFIG.lineHeight) + 2;
+                while (this.codeLines.length < maxLines) {
+                    for (let i = 0; i < EVIL_CODE.length && this.codeLines.length < maxLines; i += charsPerLine) {
+                        this.codeLines.push(EVIL_CODE.substring(i, i + charsPerLine));
+                    }
+                }
+            }
+
+            setupInput() {
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && this.phase === 'waiting_enter') {
+                        this.onEnterPressed();
+                    } else if (e.key.toLowerCase() === 'r' && (this.phase === 'won' || this.phase === 'lost')) {
+                        this.restart();
+                   }
+                });
+            }
+
+            // ========================
+            // ENTER PRESSED -> request mic, start breach
+            // ========================
+            async onEnterPressed() {
+                this.phase = 'requesting_mic';
+
+                // Initialize audio (first time requests mic, subsequent reuses stream)
+                await this.audioSystem.initialize();
+                this.audioInitialized = true;
+
+                // Initialize speech system (once)
+                if (!this.speechSystem) {
+                    this.speechSystem = new SpeechSystem(
+                        (word) => this.onBlessingDetected(word),
+                        () => this.onInstantWin()
+                    );
+                    this.speechSystem.initialize();
+                }
+
+                // Transition to breach phase, carrying over the intro text
+                this.phase = 'breach';
+                this.phaseData = {
+                    completedLines: [...this.phaseData.completedLines],
+                    breachLineIndex: 0,
+                    currentChar: 0,
+                    charTimer: 0,
+                    breachDone: false,
+                    breachEndTime: 0
+                };
+            }
+
+            // ========================================
+            // PHASE: INTRO (Terminal text types out)
+            // ========================================
+            updateIntroPhase(deltaTime) {
+                const d = this.phaseData;
+                d.charTimer += deltaTime * 1000;
+
+                if (d.done) return;
+
+                if (d.currentLine < TERMINAL_LINES.length) {
+                    const line = TERMINAL_LINES[d.currentLine];
+                    if (d.charTimer >= CONFIG.terminalTypeSpeed) {
+                        if (d.currentChar < line.length) {
+                            d.currentChar++;
+                        } else {
+                            d.completedLines.push(line);
+                            d.currentLine++;
+                            d.currentChar = 0;
+                        }
+                        d.charTimer = 0;
+                    }
+                } else {
+                    d.done = true;
+                    this.phase = 'waiting_enter';
+                }
+            }
+
+            renderTerminalText(completedLines, currentLine, currentChar, sourceLines, color) {
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                this.ctx.textBaseline = 'top';
+
+                completedLines.forEach((line, idx) => {
+                    if (line.includes('ACCESS GRANTED')) {
+                        this.ctx.fillStyle = '#0f0';
+                    } else if (line.includes('ERROR 666') || line.includes('>>>>')) {
+                        this.ctx.fillStyle = '#f00';
+                    } else {
+                        this.ctx.fillStyle = color || '#0f0';
+                    }
+                    this.ctx.fillText(line, 20, 20 + idx * CONFIG.lineHeight);
+                });
+
+                // Currently typing line
+                if (currentLine !== undefined && currentLine < sourceLines.length) {
+                    const partial = sourceLines[currentLine].substring(0, currentChar);
+                    const y = 20 + completedLines.length * CONFIG.lineHeight;
+
+                    if (partial.includes('ERROR') || partial.includes('>')) {
+                        this.ctx.fillStyle = '#f00';
+                    } else {
+                        this.ctx.fillStyle = color || '#0f0';
+                    }
+                    this.ctx.fillText(partial, 20, y);
+
+                    // Blinking cursor
+                    if (Math.floor(Date.now() / 500) % 2 === 0) {
+                        this.ctx.fillText('_', 20 + partial.length * CONFIG.charWidth, y);
+                    }
+                }
+            }
+
+            renderIntroPhase() {
+                const d = this.phaseData;
+                this.renderTerminalText(
+                    d.completedLines,
+                    d.currentLine,
+                    d.currentChar,
+                    TERMINAL_LINES,
+                    '#0f0'
+                );
+            }
+
+            // ========================================
+            // PHASE: WAITING FOR ENTER
+            // ========================================
+            renderWaitingEnterPhase() {
+                this.renderIntroPhase();
+            }
+
+            // ========================================
+            // PHASE: BREACH (Access Granted -> Error 666)
+            // ========================================
+            updateBreachPhase(deltaTime) {
+                const d = this.phaseData;
+                d.charTimer += deltaTime * 1000;
+
+                if (d.breachLineIndex < BREACH_LINES.length) {
+                    const line = BREACH_LINES[d.breachLineIndex];
+                    if (d.charTimer >= CONFIG.terminalTypeSpeed) {
+                        if (d.currentChar < line.length) {
+                            d.currentChar++;
+                        } else {
+                            d.completedLines.push(line);
+                            d.breachLineIndex++;
+                            d.currentChar = 0;
+                        }
+                        d.charTimer = 0;
+                    }
+                } else if (!d.breachDone) {
+                    d.breachDone = true;
+                    d.breachEndTime = performance.now();
+                }
+
+                // After breach text finishes, wait then move to voice sync
+                if (d.breachDone && (performance.now() - d.breachEndTime) > 1500) {
+                    const words = DEMON_MONOLOGUE.split(/\s+/);
+                    this.phase = 'voice_sync';
+                    this.phaseData = {
+                        words: words,
+                        currentWordIndex: 0,
+                        displayedWords: [],
+                        wordTimer: 0,
+                        audioStarted: false,
+                        audioSource: null,
+                        screenDim: 0,
+                        fastFinish: false,
+                        transitionTimer: 0
+                    };
+                }
+            }
+
+            renderBreachPhase() {
+                const d = this.phaseData;
+                this.renderTerminalText(
+                    d.completedLines,
+                    d.breachLineIndex < BREACH_LINES.length ? d.breachLineIndex : undefined,
+                    d.currentChar,
+                    BREACH_LINES,
+                    '#0f0'
+                );
+            }
+
+            // ========================================
+            // PHASE: VOICE SYNC (Demon monologue word-by-word)
+            // ========================================
+            updateVoiceSyncPhase(deltaTime) {
+                const d = this.phaseData;
+
+                // Word timings in milliseconds (from your audio analysis)
+                const WORD_TIMINGS = [
+                    1697,   // "The"
+                    1856,   // "darkness"
+                    3023,   // "has"
+                    3395,   // "found"
+                    3862,   // "a"
+                    4067,   // "new"
+                    4662,   // "home"
+                    5884,   // "in"
+                    6207,   // "your"
+                    6662,   // "wires."
+                    6663,   // \n (newline)
+                    8852,   // "Your"
+                    9143,   // "computer"
+                    10672,  // "is"
+                    11025,  // "but"
+                    11406,  // "a"
+                    11673,  // "vessel"
+                    12977,  // "for"
+                    13291,  // "our"
+                    13957,  // "malice"
+                    15193,  // "now."
+                    15194,  // \n (newline)
+                    16868,  // "Fight"
+                    17192,  // "it"
+                    17919,  // "if"
+                    18210,  // "you"
+                    18482,  // "must..."
+                    20295,  // "whisper"
+                    21169,  // "your"
+                    21488,  // "fragile"
+                    22480,  // "blessings"
+                    23917,  // "into"
+                    24242,  // "the"
+                    24659,  // "void."
+                    24660,  // \n (newline)
+                    26723,  // "But"
+                    26900,  // "remember:"
+                    28843,  // "in"
+                    29217,  // "this"
+                    29719,  // "domain,"
+                    31439,  // "your"
+                    31897,  // "light"
+                    33116,  // "is"
+                    33544,  // "already"
+                    34628   // "extinguished."
+                ];
+
+                // Start audio on first frame
+                if (!d.audioStarted) {
+                    d.audioStarted = true;
+                    d.audioSource = this.audioSystem.playOpening();
+                    d.startTime = performance.now();
+
+                    if (d.audioSource) {
+                        d.audioSource.onended = () => {
+                            d.fastFinish = true;
+                        };
+                    }
+                }
+
+                // Gradually dim screen ~15%
+                d.screenDim = Math.min(0.15, d.screenDim + deltaTime * 0.03);
+
+                // Calculate elapsed time since audio started
+                const elapsed = performance.now() - d.startTime;
+
+                if (d.fastFinish) {
+                    // Audio ended - rapid finish remaining words
+                    d.wordTimer = d.wordTimer || 0;
+                    d.wordTimer += deltaTime * 1000;
+                    if (d.wordTimer >= 50 && d.currentWordIndex < d.words.length) {
+                        d.displayedWords.push(d.words[d.currentWordIndex]);
+                        d.currentWordIndex++;
+                        d.wordTimer = 0;
+                    }
+                } else {
+                    // Show words based on precise timing
+                    while (d.currentWordIndex < d.words.length &&
+                        d.currentWordIndex < WORD_TIMINGS.length &&
+                        elapsed >= WORD_TIMINGS[d.currentWordIndex]) {
+                        d.displayedWords.push(d.words[d.currentWordIndex]);
+                        d.currentWordIndex++;
+                    }
+                }
+
+                // All words displayed - transition
+                if (d.currentWordIndex >= d.words.length) {
+                    if (!d.audioSource || d.fastFinish) {
+                        d.transitionTimer = d.transitionTimer || 0;
+                        d.transitionTimer += deltaTime;
+                        if (d.transitionTimer > 1.5) {
+                            this.phase = 'code_flood';
+                            this.phaseData = {
+                                currentChar: 0,
+                                displayedText: ''
+                            };
+                        }
+                    }
+                }
+            }
+            renderVoiceSyncPhase() {
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                const d = this.phaseData;
+                const startY = this.canvas.height * 0.3;
+                const maxWidth = this.canvas.width - 100;
+                let x = 50;
+                let y = startY;
+
+                this.ctx.font = `${CONFIG.fontSize * 1.3}px monospace`;
+                this.ctx.textBaseline = 'top';
+
+                d.displayedWords.forEach((word, idx) => {
+                    // Check for newline marker
+                    if (word === 'NEWLINE') {
+                        x = 50;
+                        y += CONFIG.lineHeight * 2.5;
+                        return;
+                    }
+
+                    const wordWidth = this.ctx.measureText(word + ' ').width;
+
+                    if (x + wordWidth > maxWidth) {
+                        x = 50;
+                        y += CONFIG.lineHeight * 1.8;
+                    }
+
+                    // Per-word jitter
+                    const jx = (Math.random() - 0.5) * 2;
+                    const jy = (Math.random() - 0.5) * 2;
+
+                    // Latest word glows brighter
+                    this.ctx.fillStyle = (idx === d.displayedWords.length - 1) ? '#ff3333' : '#cc0000';
+                    this.ctx.fillText(word, x + jx, y + jy);
+                    x += wordWidth;
+                });
+
+                // Screen dim overlay
+                if (d.screenDim > 0) {
+                    this.ctx.fillStyle = `rgba(0, 0, 0, ${d.screenDim})`;
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                }
+
+                // Occasional flicker
+                if (Math.random() < 0.02) {
+                    this.ctx.fillStyle = 'rgba(255, 0, 0, 0.05)';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                }
+            }
+
+            // ========================================
+            // PHASE: CODE FLOOD
+            // ========================================
+            updateCodeFloodPhase(deltaTime) {
+                const d = this.phaseData;
+
+                for (let i = 0; i < CONFIG.codeFloodCharsPerFrame; i++) {
+                    if (d.currentChar < EVIL_CODE.length) {
+                        d.displayedText += EVIL_CODE[d.currentChar];
+                        d.currentChar++;
+                    }
+                }
+
+                if (d.currentChar >= EVIL_CODE.length) {
+                    // Code flood complete -> swarm formation
+                    this.phase = 'swarm_formation';
+                    this.initializeSwarm();
+                    this.phaseData = { timer: 0 };
+
+                    // Enable constant effects
+                    document.getElementById('vignette').classList.add('active');
+                    this.canvas.classList.add('distortion');
+                    this.startJitter();
+                }
+            }
+
+            renderCodeFloodPhase() {
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.ctx.fillStyle = '#0f0';
+                this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                this.ctx.textBaseline = 'top';
+
+                const d = this.phaseData;
+                const charsPerLine = Math.floor(this.canvas.width / CONFIG.charWidth) - 1;
+
+                for (let i = 0, lineIdx = 0; i < d.displayedText.length; i += charsPerLine, lineIdx++) {
+                    this.ctx.fillText(d.displayedText.substring(i, i + charsPerLine), 5, lineIdx * CONFIG.lineHeight);
+                }
+            }
+
+            // ========================================
+            // PHASE: SWARM FORMATION
+            // ========================================
+            initializeSwarm() {
+                this.swarmCharacters = [];
+                const allChars = EVIL_CODE.split('').filter(c => c !== '\n');
+                const canvasWidth = this.canvas.width;
+                const canvasHeight = this.canvas.height;
+                const charsPerRow = Math.floor(canvasWidth / CONFIG.charWidth);
+
+                // Sample evenly for performance
+                const step = Math.max(1, Math.floor(allChars.length / CONFIG.maxSwarmParticles));
+
+                for (let i = 0; i < allChars.length && this.swarmCharacters.length < CONFIG.maxSwarmParticles; i += step) {
+                    const col = i % charsPerRow;
+                    const row = Math.floor(i / charsPerRow);
+                    const char = new CodeCharacter(allChars[i], col * CONFIG.charWidth + 10, row * CONFIG.lineHeight + 10, i);
+                    this.swarmCharacters.push(char);
+                }
+
+                this.swarmLeader = new SwarmLeader(canvasWidth, canvasHeight);
+            }
+
+            updateSwarmFormationPhase(deltaTime) {
+                this.phaseData.timer += deltaTime;
+                const time = performance.now() / 1000;
+                const breathIntensity = this.audioSystem.getSwarmBreathIntensity();
+
+                if (this.swarmLeader) {
+                    this.swarmLeader.update(time, this.blessedAreas);
+                }
+
+                this.swarmCharacters.forEach(char => {
+                    char.followLeader(this.swarmLeader, this.swarmCharacters, time, breathIntensity);
+                    char.updatePosition(this.canvas.width, this.canvas.height, this.blessedAreas);
+                });
+
+                    if (this.phaseData.timer > 3) {
+                    // Start gameplay
+                    this.phase = 'playing';
+                    this.audioSystem.playBackgroundMusic();
+                    this.gameStartTime = Date.now();
+                    this.lastBlessingTimestamp = Date.now();
+                    this.dangerLevel = 0;
+
+                    this.speechSystem.start();
+                }
+            }
+
+            renderSwarmFormationPhase() {
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Base evil code
+                this.ctx.fillStyle = '#0f0';
+                this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                this.ctx.textBaseline = 'top';
+                const maxVisible = Math.ceil(this.canvas.height / CONFIG.lineHeight);
+                for (let i = 0; i < maxVisible && i < this.codeLines.length; i++) {
+                    this.ctx.fillText(this.codeLines[i], 5, i * CONFIG.lineHeight);
+                }
+
+                // Swarm on top
+                this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                this.swarmCharacters.forEach(char => char.render(this.ctx));
+            }
+
+            // ========================================
+            // PHASE: PLAYING (The Exorcism)
+            // ========================================
+            updatePlayingPhase(deltaTime, time) {
+                const now = Date.now();
+                const silenceTime = now - this.lastBlessingTimestamp;
+
+                // Check lose condition
+                if (silenceTime > CONFIG.timeToLose) {
+                    this.triggerLose();
+                    return;
+                }
+
+                // Danger level (0-1) builds as silence increases
+                this.dangerLevel = Math.max(0, Math.min(1, silenceTime / CONFIG.timeToLose));
+                this.audioSystem.updateBackgroundMusicVolume(this.dangerLevel);
+                // Swarm breathing from combined demon voice + mic
+                const breathIntensity = this.audioSystem.getSwarmBreathIntensity();
+                const dangerBreath = breathIntensity * (1 + this.dangerLevel * 1.5);
+
+                if (this.swarmLeader) {
+                    this.swarmLeader.update(time, this.blessedAreas);
+                }
+
+                this.swarmCharacters.forEach(char => {
+                    char.followLeader(this.swarmLeader, this.swarmCharacters, time, dangerBreath);
+                    char.updatePosition(this.canvas.width, this.canvas.height, this.blessedAreas);
+                });
+
+                // Decay blessed areas
+                this.blessedAreas.forEach(area => area.updateDecay());
+                this.blessedAreas = this.blessedAreas.filter(area => !area.isDead());
+
+                // Clean up expired ghost blessings
+                this.ghostBlessings = this.ghostBlessings.filter(g => !g.isDead());
+
+                // Check win condition
+                this.checkWinCondition();
+            }
+
+            checkWinCondition() {
+                const maxLines = Math.ceil(this.canvas.height / CONFIG.lineHeight);
+                for (let line = 0; line < maxLines; line++) {
+                    const covered = this.blessedAreas.some(area =>
+                        area.strength > CONFIG.blessingThreshold &&
+                        line >= area.startLine && line < area.endLine
+                    );
+                    if (!covered) return; // Not fully purified yet
+                }
+                this.triggerWin();
+            }
+
+            renderPlayingPhase() {
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                this.ctx.textBaseline = 'top';
+
+                // 1. Base evil code (green)
+                this.ctx.fillStyle = '#0f0';
+                const maxVisible = Math.ceil(this.canvas.height / CONFIG.lineHeight);
+                for (let i = 0; i < maxVisible && i < this.codeLines.length; i++) {
+                    this.ctx.fillText(this.codeLines[i], 5, i * CONFIG.lineHeight);
+                }
+
+                // 2. Blessed areas (white overlay)
+                this.blessedAreas.forEach(area => area.render(this.ctx, this.canvas.width, this.codeLines));
+
+                // 3. Ghost blessings (cooldown repeats, bold white)
+                this.ghostBlessings.forEach(ghost => ghost.render(this.ctx));
+
+                // 4. Swarm on top
+                this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                this.swarmCharacters.forEach(char => char.render(this.ctx));
+
+                // 5. Red danger tint as lose approaches
+                if (this.dangerLevel > 0.3) {
+                    const alpha = (this.dangerLevel - 0.3) * 0.7;
+                    this.ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                }
+
+                // 6. Occasional code flicker
+                if (Math.random() < 0.02) {
+                    this.ctx.fillStyle = 'rgba(0, 255, 0, 0.03)';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                }
+            }
+
+            // ========================================
+            // BLESSING HANDLER
+            // ========================================
+            onBlessingDetected(word) {
+                if (this.phase !== 'playing') return;
+
+                const now = Date.now();
+                const lastTime = this.lastBlessingTime[word] || 0;
+
+                // Always reset the lose timer on ANY blessing attempt
+                this.lastBlessingTimestamp = now;
+
+                // Check cooldown for this specific word
+                if (now - lastTime < CONFIG.blessingCooldown) {
+                    // COOLDOWN: show bold ghost (visual feedback only, no whitening)
+                    const ghostX = 50 + Math.random() * (this.canvas.width - 200);
+                    const ghostY = Math.random() * (this.canvas.height - 50);
+                    this.ghostBlessings.push(new GhostBlessing(word, ghostX, ghostY));
+                    return;
+                }
+
+                // Full blessing effect
+                this.lastBlessingTime[word] = now;
+
+                const maxLines = Math.ceil(this.canvas.height / CONFIG.lineHeight);
+
+                // Wrap around when reaching the end
+                if (this.currentBlessedLine >= maxLines) {
+                    this.currentBlessedLine = 0;
+                }
+
+                // Volume-based ripple size
+                const volume = this.audioSystem.getMicVolume();
+                const numLines = linesFromVolume(volume);
+
+                const area = new BlessedArea(this.currentBlessedLine, numLines, word);
+                this.blessedAreas.push(area);
+                this.currentBlessedLine += numLines;
+
+                // Refresh any overlapping existing blessed areas
+                this.blessedAreas.forEach(existing => {
+                    if (existing !== area &&
+                        existing.startLine < area.endLine &&
+                        existing.endLine > area.startLine) {
+                        existing.refresh();
+                    }
+                });
+            }
+
+            onInstantWin() {
+                if (this.phase !== 'playing') return;
+                this.triggerWin();
+            }
+
+
+            // ========================================
+            // JITTER EFFECT
+            // ========================================
+            startJitter() {
+                this.jitterTimer = setInterval(() => {
+                    this.canvas.classList.add('jitter');
+                    setTimeout(() => this.canvas.classList.remove('jitter'), 100);
+                }, CONFIG.jitterInterval);
+            }
+
+            // ========================================
+            // WIN
+            // ========================================
+            triggerWin() {
+                this.phase = 'won';
+                this.audioSystem.resumeContext();
+                this.audioSystem.playWinSoundInstant();
+                this.audioSystem.resumeContext();
+
+                this.audioSystem.fadeOutBackgroundMusic(1000);
+                if (this.speechSystem) this.speechSystem.stop();
+                clearTimeout(this.evilCommentaryTimer);
+                clearInterval(this.jitterTimer);
+                this.canvas.classList.remove('distortion', 'jitter');
+                document.getElementById('vignette').classList.remove('active');
+
+
+                const seconds = ((Date.now() - this.gameStartTime) / 1000).toFixed(2);
+
+                this.phaseData = {
+                    flashTimer: 0,
+                    flashDone: false,
+                    typedLines: [],
+                    currentLine: 0,
+                    currentChar: 0,
+                    charTimer: 0,
+                    lines: [
+                        '',
+                        'C:\\Users\\noy50> EXORCISM COMPLETE.',
+                        `C:\\Users\\noy50> Time to purify: ${seconds} seconds`,
+                        '',
+                        'C:\\Users\\noy50> Press [R] to restart.'
+                    ]
+                };
+            }
+
+            updateWonPhase(deltaTime) {
+                const d = this.phaseData;
+
+                if (!d.flashDone) {
+                    d.flashTimer += deltaTime;
+                    if (d.flashTimer > 0.5) d.flashDone = true;
+                    return;
+                }
+
+                // Type terminal lines
+                d.charTimer += deltaTime * 1000;
+                if (d.currentLine < d.lines.length) {
+                    const line = d.lines[d.currentLine];
+                    if (d.charTimer >= CONFIG.terminalTypeSpeed) {
+                        if (d.currentChar < line.length) {
+                            d.currentChar++;
+                        } else {
+                            d.typedLines.push(line);
+                            d.currentLine++;
+                            d.currentChar = 0;
+                        }
+                        d.charTimer = 0;
+                    }
+                }
+            }
+
+            renderWonPhase() {
+                const d = this.phaseData;
+
+                if (!d.flashDone) {
+                    const brightness = d.flashTimer < 0.2 ? 1 : Math.max(0, 1 - (d.flashTimer - 0.2) / 0.3);
+                    const v = Math.floor(brightness * 255);
+                    this.ctx.fillStyle = `rgb(${v}, ${v}, ${v})`;
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    return;
+                }
+
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.ctx.fillStyle = '#fff';
+                this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                this.ctx.textBaseline = 'top';
+
+                const startY = this.canvas.height / 2 - 80;
+
+                d.typedLines.forEach((line, idx) => {
+                    this.ctx.fillText(line, 20, startY + idx * CONFIG.lineHeight);
+                });
+
+                if (d.currentLine < d.lines.length) {
+                    const partial = d.lines[d.currentLine].substring(0, d.currentChar);
+                    const y = startY + d.typedLines.length * CONFIG.lineHeight;
+                    this.ctx.fillText(partial, 20, y);
+
+                    if (Math.floor(Date.now() / 500) % 2 === 0) {
+                        this.ctx.fillText('_', 20 + partial.length * CONFIG.charWidth, y);
+                    }
+                }
+            }
+
+            // ========================================
+            // LOSE
+            // ========================================
+            triggerLose() {
+                this.phase = 'lost';
+                if (this.speechSystem) this.speechSystem.stop();
+                clearTimeout(this.evilCommentaryTimer);
+                clearInterval(this.jitterTimer);
+                this.canvas.classList.remove('distortion', 'jitter');
+                document.getElementById('vignette').classList.remove('active');
+
+                this.phaseData = {
+                    timer: 0,
+                    takeover: true,
+                    typedLines: [],
+                    currentLine: 0,
+                    currentChar: 0,
+                    charTimer: 0,
+                    lines: [
+                        '',
+                        'C:\\Users\\noy50> POSSESSION COMPLETE.',
+                        'C:\\Users\\noy50> System integrity: 0%',
+                        '',
+                        'C:\\Users\\noy50> Press [R] to attempt exorcism again.'
+                    ]
+                };
+            }
+
+            updateLostPhase(deltaTime) {
+                const d = this.phaseData;
+                d.timer += deltaTime;
+
+                // Dramatic takeover for first 2 seconds
+                if (d.takeover && d.timer < 2) return;
+
+                if (d.takeover) {
+                    d.takeover = false;
+                }
+
+                // Type terminal lines
+                d.charTimer += deltaTime * 1000;
+                if (d.currentLine < d.lines.length) {
+                    const line = d.lines[d.currentLine];
+                    if (d.charTimer >= CONFIG.terminalTypeSpeed) {
+                        if (d.currentChar < line.length) {
+                            d.currentChar++;
+                        } else {
+                            d.typedLines.push(line);
+                            d.currentLine++;
+                            d.currentChar = 0;
+                        }
+                        d.charTimer = 0;
+                    }
+                }
+            }
+
+            renderLostPhase() {
+                const d = this.phaseData;
+
+                if (d.takeover) {
+                    // Screen fills with red-tinted jittering evil code
+                    this.ctx.fillStyle = '#000';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                    const jx = (Math.random() - 0.5) * 8;
+                    const jy = (Math.random() - 0.5) * 8;
+
+                    this.ctx.fillStyle = '#f00';
+                    this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                    this.ctx.textBaseline = 'top';
+
+                    const maxVisible = Math.ceil(this.canvas.height / CONFIG.lineHeight);
+                    for (let i = 0; i < maxVisible && i < this.codeLines.length; i++) {
+                        this.ctx.fillText(this.codeLines[i], 5 + jx, i * CONFIG.lineHeight + jy);
+                    }
+
+                    // Swarm still visible
+                    this.swarmCharacters.forEach(char => char.render(this.ctx));
+
+                    // Red tint builds
+                    const alpha = Math.min(0.6, d.timer * 0.3);
+                    this.ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    return;
+                }
+
+                // Terminal text after takeover
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.ctx.fillStyle = '#f00';
+                this.ctx.font = `${CONFIG.fontSize}px monospace`;
+                this.ctx.textBaseline = 'top';
+
+                const startY = this.canvas.height / 2 - 80;
+
+                d.typedLines.forEach((line, idx) => {
+                    this.ctx.fillText(line, 20, startY + idx * CONFIG.lineHeight);
+                });
+
+                if (d.currentLine < d.lines.length) {
+                    const partial = d.lines[d.currentLine].substring(0, d.currentChar);
+                    const y = startY + d.typedLines.length * CONFIG.lineHeight;
+                    this.ctx.fillText(partial, 20, y);
+
+                    if (Math.floor(Date.now() / 500) % 2 === 0) {
+                        this.ctx.fillText('_', 20 + partial.length * CONFIG.charWidth, y);
+                    }
+                }
+            }
+
+            // ========================================
+            // GAME LOOP
+            // ========================================
+            gameLoop(currentTime) {
+                const deltaTime = Math.min((currentTime - this.lastTime) / 1000, 0.1);
+                this.lastTime = currentTime;
+
+                this.update(deltaTime, currentTime / 1000);
+                this.render();
+
+                this.animationId = requestAnimationFrame((t) => this.gameLoop(t));
+            }
+
+            update(deltaTime, time) {
+                switch (this.phase) {
+                    case 'intro': this.updateIntroPhase(deltaTime); break;
+                    case 'waiting_enter': break;
+                    case 'requesting_mic': break;
+                    case 'breach': this.updateBreachPhase(deltaTime); break;
+                    case 'voice_sync': this.updateVoiceSyncPhase(deltaTime); break;
+                    case 'code_flood': this.updateCodeFloodPhase(deltaTime); break;
+                    case 'swarm_formation': this.updateSwarmFormationPhase(deltaTime); break;
+                    case 'playing': this.updatePlayingPhase(deltaTime, time); break;
+                    case 'won': this.updateWonPhase(deltaTime); break;
+                    case 'lost': this.updateLostPhase(deltaTime); break;
+                }
+            }
+
+            render() {
+                switch (this.phase) {
+                    case 'intro': this.renderIntroPhase(); break;
+                    case 'waiting_enter': this.renderWaitingEnterPhase(); break;
+                    case 'requesting_mic': this.renderWaitingEnterPhase(); break;
+                    case 'breach': this.renderBreachPhase(); break;
+                    case 'voice_sync': this.renderVoiceSyncPhase(); break;
+                    case 'code_flood': this.renderCodeFloodPhase(); break;
+                    case 'swarm_formation': this.renderSwarmFormationPhase(); break;
+                    case 'playing': this.renderPlayingPhase(); break;
+                    case 'won': this.renderWonPhase(); break;
+                    case 'lost': this.renderLostPhase(); break;
+                }
+            }
+
+            // ========================================
+            // RESTART (reuses mic stream, no re-request)
+            // ========================================
+            restart() {
+                if (this.speechSystem) this.speechSystem.stop();
+                if (this.evilCommentaryTimer) clearTimeout(this.evilCommentaryTimer);
+                if (this.jitterTimer) clearInterval(this.jitterTimer);
+
+                this.canvas.classList.remove('distortion', 'jitter');
+                document.getElementById('vignette').classList.remove('active');
+
+                // Reset game state
+                this.swarmCharacters = [];
+                this.swarmLeader = null;
+                this.blessedAreas = [];
+                this.ghostBlessings = [];
+                this.currentBlessedLine = 0;
+                this.lastBlessingTime = {};
+                this.lastBlessingTimestamp = 0;
+                this.dangerLevel = 0;
+                this.gameStartTime = 0;
+
+                // Skip directly to code flood phase
+                this.phase = 'code_flood';
+                this.phaseData = {
+                    currentChar: 0,
+                    displayedText: ''
+                };
+                this.audioSystem.playBackgroundMusic();
+
+                // Resume audio context if suspended
+                this.audioSystem.resumeContext();
+            }
+
+            // ========================================
+            // EXIT
+            // ========================================
+            exit() {
+                if (this.speechSystem) this.speechSystem.stop();
+                if (this.evilCommentaryTimer) clearTimeout(this.evilCommentaryTimer);
+                if (this.jitterTimer) clearInterval(this.jitterTimer);
+                if (this.animationId) cancelAnimationFrame(this.animationId);
+
+                this.ctx.fillStyle = '#000';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            }
+        }
+
+        // ========================
+        // INITIALIZE
+        // ========================
+        const game = new Game();
+    </script>
+</body>
+</html>
